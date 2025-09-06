@@ -1,0 +1,21 @@
+title: "Jatin Batra"
+description: "Reader, STCS @ TIFR — Algorithms, Learning Theory, Optimization, Robustness"
+url: ""  # Set to your custom domain if any
+baseurl: ""
+
+theme: minima
+plugins:
+  - jekyll-seo-tag
+
+# Show pages in the top nav
+header_pages:
+  - index.md
+  - publications.md
+  - teaching.md
+
+# Minima theme options
+minima:
+  social_links:
+    - { platform: github,  user_url: "https://github.com/jatinbatra50" }
+    - { platform: google_scholar, user_url: "https://scholar.google.com/scholar?hl=en&q=Jatin+Batra" }
+    - { platform: linkedin, user_url: "https://www.linkedin.com/search/results/all/?keywords=Jatin%20Batra%20TIFR" }
