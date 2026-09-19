@@ -1,10 +1,9 @@
-# Keep the lesson small and runnable
+# Keep the explanation concrete
 
-Use one example throughout. Explain what a number means before adding another
-formula. Keep the notebook self-contained and retain the distinction between
-prediction coverage and confidence in a measured coverage rate.
+Explain the bottle example in ordinary language. Keep the model's prediction
+separate from the evidence supplied by new measurements.
 
-`TUTORIAL.md` is the notebook's source. After editing it, run:
+`TUTORIAL.md` is the notebook source. To regenerate and check the project:
 
 ```bash
 python scripts/build_tutorial_notebook.py
@@ -13,9 +12,7 @@ python experiments.py
 python -m unittest discover -s tests -v
 ```
 
-Commit the executed notebook and regenerated results together. Keep the
-training, calibration, and measurement samples separate. Choose measurement
-precision and sample size before drawing the measurement sample.
-
-`requirements-reproduce.txt` records the versions used for the saved example.
-CI also runs the tutorial and tests on Python 3.10 and 3.12.
+Keep the training and validation observations independent. Fix the interval
+and test count before looking at validation outcomes. Preserve full precision
+in calculations and round a reported guaranteed minimum downward.
+The notebook must work without importing project files.

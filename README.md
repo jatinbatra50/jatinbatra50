@@ -1,52 +1,35 @@
-# Uncertainty quantification, one example at a time
+# A prediction range, then a check
 
-**Predict a value. Put an interval around it. Measure how often that interval works.**
+**Bayes proposes a range. New measurements check how often it works.
+Hoeffding puts a limit on the checking error.**
 
-A short, runnable introduction to uncertainty quantification (UQ), using one
-noisy sensor and ordinary Python. You will build prediction intervals with
-split conformal calibration, then use Hoeffding's inequality to choose enough
-fresh measurements for a precise coverage estimate.
+One example: a machine fills bottles. We learn from 20 bottles, predict a range
+for the next bottle, and check that range on 10,000 new bottles.
 
-**Start here: [the executed Jupyter notebook](Provable_UQ_Tutorial.ipynb)**
-or [read the tutorial on GitHub](TUTORIAL.md).
+[Read the short lesson](TUTORIAL.md) ·
+[Run the notebook](Provable_UQ_Tutorial.ipynb)
 
-## What you will learn
+## What the example says
 
-| Question | Tool | What you get |
-|---|---|---|
-| What reading should I predict? | Linear regression | A point prediction |
-| How much can the next reading vary? | Conformal calibration | A prediction interval |
-| How often does the interval contain the reading? | Fresh measurements | A coverage estimate |
-| How accurate is that estimate? | Hoeffding's inequality | A finite-sample error bar |
-| How many measurements do I need? | A sample-size formula | A budget chosen before sampling |
+1. The Bayesian model gives a **99% prediction range of about 94.75–105.31 mL**.
+2. **9,909 of 10,000** fresh test bottles fall inside it: **99.09% measured coverage**.
+3. Hoeffding subtracts **1.224 percentage points** to allow for sampling error.
+4. The result: **with 95% confidence, the range covers at least 97.8% of bottles
+   from the same process**. The reported lower bound is rounded down.
 
-![A prediction interval around a fitted sensor response](results/demo/prediction-interval.png)
+The model's 99% is a prediction under its assumptions. The validation result
+is a separate statement supported by fresh measurements. It remains valid
+even when the model's distributional assumptions are wrong, provided the test
+bottles are independent and representative of the future process.
 
-## A deliberately precise example
+![New bottles compared with the model's fixed range](results/demo/bottle-interval.png)
 
-The example uses 200 training observations and 4,000 separate calibration
-observations. It targets 97.5% prediction coverage and then takes **73,778 fresh
-measurements**. That measurement count guarantees an error bar of at most
-**±0.5 percentage points at 95% confidence** for the coverage of the fitted,
-calibrated predictor, under independent sampling from the same distribution.
+The example generates synthetic bottles so it runs anywhere. A claim about a
+real machine requires fresh measurements from that machine.
 
-The three settings do different jobs:
+## Run
 
-- `alpha = 0.025`: the prediction interval's target miss rate.
-- `epsilon = 0.005`: the desired coverage-measurement error.
-- `delta = 0.05`: the error probability allowed for that measurement guarantee.
-
-The notebook shows the actual estimate, interval width, and numerical error
-bar. Change a setting, rerun from the top, and see what changes.
-
-**Saved run:** measured coverage **97.39%**, with a **[96.89%, 97.89%]**
-confidence interval. The prediction band is **2.236 sensor units** wide.
-
-## Run it
-
-Python 3.10 or newer, NumPy, and Matplotlib are enough for the scripts.
-The notebook contains all its code and requires no data downloads or local
-project imports.
+Python 3.10 or newer:
 
 ```bash
 git clone --branch provable-uq-tutorial --single-branch https://github.com/jatinbatra50/jatinbatra50.git
@@ -55,28 +38,19 @@ python -m pip install -r requirements-notebook.txt
 jupyter lab Provable_UQ_Tutorial.ipynb
 ```
 
-To regenerate the saved example without Jupyter:
+The notebook contains all its code. To regenerate the results without Jupyter:
 
 ```bash
 python experiments.py
 ```
 
-For twice the precision, take roughly four times as many measurements:
+Four times as many test bottles halves the Hoeffding allowance:
 
 ```bash
-python experiments.py --epsilon 0.0025 --output-dir results/finer
+python experiments.py --test-size 40000 --output-dir results/more-bottles
 ```
 
-## Files
-
-| File | Purpose |
-|---|---|
-| [TUTORIAL.md](TUTORIAL.md) | The short lesson, with formulas, code, and figures |
-| [Provable_UQ_Tutorial.ipynb](Provable_UQ_Tutorial.ipynb) | The same lesson, fully executable with saved outputs |
-| [uq.py](uq.py) | Reusable UQ functions |
-| [experiments.py](experiments.py) | Reproduce the example and figures |
-| [results/demo/report.json](results/demo/report.json) | Settings and numerical results |
-| [tests/test_uq.py](tests/test_uq.py) | Checks of calibration, measurement bounds, and the example |
-
-All observations here are synthetic. See [attribution and references](ATTRIBUTION.md)
-for the original inspiration and the statistical methods used.
+The main lesson is [TUTORIAL.md](TUTORIAL.md).
+Reusable calculations are in [uq.py](uq.py), and saved numerical results are
+in [report.json](results/demo/report.json).
+[References and attribution](ATTRIBUTION.md).

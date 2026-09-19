@@ -1,31 +1,33 @@
 {
-  "schema_version": 2,
-  "model": "X ~ Uniform[-1,1]; Y = 1 + 2X + Normal(0, 0.5^2)",
+  "schema_version": 3,
+  "model": {
+    "actual_mean": 100.5,
+    "actual_sd": 2.0,
+    "prior_mean": 100.0,
+    "prior_sd": 5.0,
+    "assumed_noise_sd": 2.0
+  },
   "settings": {
     "seed": 20260919,
-    "training_size": 200,
-    "epsilon": 0.005,
+    "training_size": 20,
+    "test_size": 10000,
     "delta": 0.05,
-    "random_streams": "SeedSequence.spawn(3): train, calibrate, measure"
+    "random_streams": "SeedSequence.spawn(2): train, test"
   },
-  "fit": {
-    "intercept": 0.9807594097676032,
-    "slope": 1.912381820006577
+  "prediction": {
+    "posterior_mean": 100.03061795929838,
+    "posterior_sd": 0.44543540318737396,
+    "predictive_sd": 2.04900285466192,
+    "probability": 0.99,
+    "lower": 94.75273636320486,
+    "upper": 105.3084995553919
   },
-  "calibration": {
-    "size": 4000,
-    "alpha": 0.025,
-    "nominal_coverage": 0.975,
-    "rank": 3901,
-    "half_width": 1.1180165580744643
-  },
-  "measurement": {
-    "size": 73778,
-    "covered": 71854,
-    "estimate": 0.9739217652958877,
-    "radius": 0.0049999860758527795,
-    "lower": 0.968921779220035,
-    "upper": 0.9789217513717404,
+  "validation": {
+    "size": 10000,
+    "hits": 9909,
+    "estimate": 0.9909,
+    "margin": 0.012238734153404082,
+    "lower_bound": 0.978661265846596,
     "confidence": 0.95
   }
 }

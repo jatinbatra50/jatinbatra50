@@ -1,19 +1,20 @@
-"""Run the tutorial and save its numerical results and two figures.
+"""Run the bottle example and save its measurements and one picture.
 
     python experiments.py --output-dir results/demo
 """
 
 import argparse
 import json
+from math import floor
 from pathlib import Path
 
 import numpy as np
 
-from uq import hoeffding_radius, predict_line, run_demo
+from uq import run_example
 
 
-def save_figures(output_dir, report, data):
-    """Draw a prediction interval and the cost of a smaller measurement error."""
+def save_figure(output_dir, report, data):
+    """Show the fixed prediction range and the first 100 test bottles."""
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
@@ -22,48 +23,33 @@ def save_figures(output_dir, report, data):
         "font.family": "DejaVu Sans", "font.size": 11,
         "axes.spines.top": False, "axes.spines.right": False,
         "axes.titleweight": "bold", "figure.dpi": 140, "savefig.dpi": 180,
-        "svg.hashsalt": "uq-tutorial",
+        "svg.hashsalt": "uq-bottles",
     })
-    navy, blue, amber = "#16324f", "#187f9c", "#bc6426"
-    grid = np.linspace(-1, 1, 300)
-    prediction = predict_line(data["coefs"], grid)
-    q = data["half_width"]
-    fig, ax = plt.subplots(figsize=(8, 4.7), layout="constrained")
-    if np.isfinite(q):
-        ax.fill_between(grid, prediction - q, prediction + q, color=blue, alpha=0.18,
-                        label=f"{report['calibration']['nominal_coverage']:.1%} conformal interval")
-    ax.scatter(data["train_x"], data["train_y"], s=15, color=navy, alpha=0.5,
-               edgecolors="none", label="200 training readings")
-    ax.plot(grid, prediction, color=blue, lw=2.3, label="Fitted mean")
-    ax.plot(grid, 1 + 2 * grid, color=amber, ls="--", lw=1.4, label="True mean")
-    ax.set(xlabel="Sensor input x", ylabel="Future reading y",
-           title="A prediction comes with a range", xlim=(-1.02, 1.02))
-    ax.legend(frameon=False, loc="upper left", fontsize=9)
+    prediction, measured = report["prediction"], report["validation"]
+    shown = min(100, measured["size"])
+    bottles = np.arange(1, shown + 1)
+    values, inside = data["test"][:shown], data["covered"][:shown]
+    fig, ax = plt.subplots(figsize=(8.5, 4.8), layout="constrained")
+    ax.axhspan(prediction["lower"], prediction["upper"], color="#187f9c", alpha=0.16,
+               label="99% Bayesian prediction range")
+    ax.axhline(prediction["posterior_mean"], color="#187f9c", lw=1.4,
+               label="Estimated mean")
+    ax.scatter(bottles[inside], values[inside], s=24, color="#16324f",
+               label="Inside the range", zorder=3)
+    ax.scatter(bottles[~inside], values[~inside], s=46, color="#bd552b", marker="x",
+               linewidths=1.8, label="Outside the range", zorder=4)
+    ax.set(xlabel="Test bottle number", ylabel="Amount in bottle (mL)",
+           xlim=(0, shown + 1))
+    ax.set_title("Predict a range, then check fresh bottles", pad=32)
+    ax.text(0, 1.02,
+            f"First {shown:,} of {measured['size']:,} test bottles shown; "
+            f"all {measured['size']:,} used to measure coverage",
+            transform=ax.transAxes, fontsize=9, color="#45556a")
+    ax.legend(frameon=False, fontsize=9, loc="lower left", ncol=2)
     ax.grid(axis="y", alpha=0.12)
     for extension in ("png", "svg"):
         kwargs = {"metadata": {"Date": None}} if extension == "svg" else {}
-        fig.savefig(output_dir / f"prediction-interval.{extension}", **kwargs)
-    plt.close(fig)
-
-    n = report["measurement"]["size"]
-    delta = report["settings"]["delta"]
-    counts = np.unique(np.geomspace(100, max(200000, 2 * n), 120).astype(int))
-    errors = np.array([hoeffding_radius(int(count), delta) for count in counts])
-    fig, ax = plt.subplots(figsize=(8, 4.7), layout="constrained")
-    ax.loglog(counts, 100 * errors, color=blue, lw=2.3)
-    chosen_error = 100 * report["measurement"]["radius"]
-    ax.scatter([n], [chosen_error], color=amber, s=55, zorder=3)
-    ax.axhline(chosen_error, color=amber, alpha=0.5, ls="--", lw=1)
-    ax.annotate(f"{n:,} readings\n±{chosen_error:.2f} percentage points",
-                xy=(n, chosen_error), xytext=(-12, 60), textcoords="offset points",
-                ha="right", color=navy, fontsize=10)
-    ax.set(xlabel="Independent test readings n",
-           ylabel="Coverage measurement error (percentage points)",
-           title=f"Choose measurement precision in advance ({1 - delta:.0%} confidence)")
-    ax.grid(which="major", alpha=0.15)
-    for extension in ("png", "svg"):
-        kwargs = {"metadata": {"Date": None}} if extension == "svg" else {}
-        fig.savefig(output_dir / f"measurement-budget.{extension}", **kwargs)
+        fig.savefig(output_dir / f"bottle-interval.{extension}", **kwargs)
     plt.close(fig)
 
 
@@ -71,32 +57,31 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--seed", type=int, default=20260919)
-    parser.add_argument("--epsilon", type=float, default=0.005,
-                        help="Desired coverage measurement error (default: .005)")
-    parser.add_argument("--delta", type=float, default=0.05,
-                        help="Failure probability for the coverage measurement (default: .05)")
-    parser.add_argument("--alpha", type=float, default=0.025,
-                        help="Conformal miscoverage level (default: .025)")
+    parser.add_argument("--test-size", type=int, default=10000,
+                        help="Number of fresh test bottles, chosen in advance (default: 10000)")
     parser.add_argument("--output-dir", type=Path, default=Path("results/demo"))
     args = parser.parse_args(argv)
     try:
-        report, data = run_demo(args.seed, args.epsilon, args.delta, args.alpha)
+        report, data = run_example(seed=args.seed, test_size=args.test_size)
     except ValueError as error:
         parser.error(str(error))
     args.output_dir.mkdir(parents=True, exist_ok=True)
-    save_figures(args.output_dir, report, data)
+    save_figure(args.output_dir, report, data)
     (args.output_dir / "report.json").write_text(
         json.dumps(report, indent=2, allow_nan=False) + "\n", encoding="utf-8"
     )
-    fit, calibration, measurement = report["fit"], report["calibration"], report["measurement"]
-    print(f"Fitted mean: {fit['intercept']:.4f} + {fit['slope']:.4f} x")
-    width_text = "unbounded" if calibration["half_width"] is None else f"±{calibration['half_width']:.4f}"
-    print(f"{calibration['nominal_coverage']:.1%} prediction interval: fitted mean {width_text}")
-    print(f"Independent test readings: {measurement['size']:,}")
-    print(f"Observed coverage: {measurement['estimate']:.2%}")
-    print(f"{measurement['confidence']:.0%} confidence interval for coverage: "
-          f"[{measurement['lower']:.2%}, {measurement['upper']:.2%}]")
-    print(f"Saved report.json and both figures (PNG + SVG) in {args.output_dir}")
+    prediction, measured = report["prediction"], report["validation"]
+    print(f"Estimated mean: {prediction['posterior_mean']:.3f} mL")
+    print(f"Uncertainty about that mean (posterior SD): {prediction['posterior_sd']:.3f} mL")
+    print(f"99% Bayesian prediction range: [{prediction['lower']:.3f}, "
+          f"{prediction['upper']:.3f}] mL")
+    print(f"Fresh bottles inside the range: {measured['hits']:,} / {measured['size']:,} "
+          f"({measured['estimate']:.2%})")
+    print(f"Hoeffding allowance: {100 * measured['margin']:.3f} percentage points")
+    minimum_percent = floor(1000 * measured["lower_bound"]) / 10
+    print(f"At 95% confidence, this fixed range covers at least "
+          f"{minimum_percent:.1f}% of same-source bottles.")
+    print(f"Saved report.json and bottle-interval.png/.svg in {args.output_dir}")
     return report
 
 
