@@ -1,22 +1,33 @@
-# A prediction range, then a check
+# Learn a line, predict a range, check its coverage
 
-**Yes: Bayesian uncertainty and a coverage test can work together.**
-The model proposes a range for the next observation. Separate measurements
-tell us how often that range actually works.
+A sensor reading $y$ depends on an input $x$. We will learn a straight line,
+put a range around its prediction, and check how often new readings fall
+inside their ranges.
 
-Let's use a machine that fills bottles, measured in millilitres.
+This is Bayesian linear regression with a Gaussian prior and Gaussian error,
+as in Bishop's *Pattern Recognition and Machine Learning*, Section 3.3.
+The noise level is fixed for this example.
 
-## 1. Learn from 20 bottles
+## 1. Start with a model
 
-We do not know the machine's average fill. Before measuring, we put it near
-100 mL, with a standard deviation of 5 mL to express our uncertainty.
-We also assume individual bottles vary around that average with a standard
-deviation of 2 mL. Both distributions are bell-shaped. These are our
-**model assumptions**.
+Our model is
 
-Bayesian updating combines this starting belief with the 20 measurements.
-The updated belief is called the *posterior*. The calculation below gives an
-average of **100.03 mL**, with remaining uncertainty of **0.45 mL**.
+$$y=w_0+w_1x+\varepsilon.$$
+
+We do not know the intercept $w_0$ or slope $w_1$. Give each a Gaussian prior
+with mean 0 and standard deviation 2. Assume independent Gaussian measurement
+noise with standard deviation 0.5.
+
+In Bishop's notation,
+
+$$
+\mathbf w\sim\mathcal N(\mathbf0,\alpha^{-1}I),\qquad
+\varepsilon\sim\mathcal N(0,\beta^{-1}),\qquad
+\alpha=0.25,\quad\beta=4.
+$$
+
+Here $\alpha$ and $\beta$ are inverse variances. Keep both fixed.
+Generate 20 training pairs from a pretend sensor so the example runs anywhere.
 
 ```python
 import math
@@ -24,119 +35,169 @@ from statistics import NormalDist
 import numpy as np
 import matplotlib.pyplot as plt
 
-TEST_COUNT = 10_000       # choose before looking at test bottles
-FAILURE_CHANCE = 0.05     # the validation bound may fail at most 5% of the time
+TEST_COUNT = 10_000       # choose before looking at test results
+FAILURE_CHANCE = 0.05     # for the separate coverage check
+alpha, beta = 0.25, 4.0
 
 train_rng, test_rng = [
     np.random.default_rng(s)
     for s in np.random.SeedSequence(20260919).spawn(2)
 ]
-# A pretend machine, used only to make this example runnable.
-training = train_rng.normal(100.5, 2, 20)
 
-prior_mean, prior_sd, bottle_sd = 100, 5, 2
-posterior_variance = 1 / (1/prior_sd**2 + len(training)/bottle_sd**2)
-posterior_mean = posterior_variance * (
-    prior_mean/prior_sd**2 + training.sum()/bottle_sd**2
-)
-print(f"Estimated average: {posterior_mean:.2f} mL")
-print(f"Uncertainty about the average: {math.sqrt(posterior_variance):.2f} mL (SD)")
+def sensor(rng, n):
+    x = rng.uniform(-1, 1, n)
+    y = 1 + 2*x + rng.normal(0, 0.5, n)
+    return x, y
+
+def features(x):
+    x = np.atleast_1d(x)
+    return np.column_stack([np.ones(len(x)), x])
+
+x_train, y_train = sensor(train_rng, 20)
+Phi = features(x_train)
 ```
 
-## 2. Predict the next bottle
+## 2. Learn which lines are plausible
 
-A new bottle has its own variation, **plus** our remaining uncertainty about
-the average. We add these two variances. This gives the *posterior predictive
-distribution*: the model's distribution for the next observation.
-
-Take its middle 99%. The result is about **94.75–105.31 mL**.
-This is the UQ step: a prediction with a range, rather than just a best guess.
-[Calculation reference](https://www.cs.ubc.ca/~murphyk/Papers/bayesGauss.pdf).
-
-```python
-predictive_sd = math.sqrt(bottle_sd**2 + posterior_variance)
-multiplier = NormalDist().inv_cdf(0.995)  # 0.5% in each tail
-low = posterior_mean - multiplier*predictive_sd
-high = posterior_mean + multiplier*predictive_sd
-print(f"The model's 99% prediction range: [{low:.2f}, {high:.2f}] mL")
-```
-
-**99% is what the model says. Now collect independent evidence.**
-
-## 3. Check 10,000 new bottles
-
-Freeze the range. Count how many new bottles fall inside it.
-This fraction is called *coverage*.
-
-Here we simulate fresh bottles from the pretend machine. For a real machine,
-replace them with new physical measurements, not draws from the fitted model.
-
-```python
-test = test_rng.normal(100.5, 2, TEST_COUNT)
-inside = (test >= low) & (test <= high)
-hits = int(inside.sum())
-measured_coverage = hits / TEST_COUNT
-print(f"Inside the range: {hits:,} of {TEST_COUNT:,}")
-print(f"Measured coverage: {100*measured_coverage:.2f}%")
-```
-
-**9,909 out of 10,000** are inside: **99.09%**.
-But another set of bottles would give a slightly different fraction.
-
-## 4. Allow for that sampling error
-
-Hoeffding gives a conservative allowance. For a 95% confidence statement,
-subtract
+After seeing the data, the coefficients still have a Gaussian distribution.
+Its mean $m$ gives our estimated intercept and slope; its covariance $S$
+describes their remaining uncertainty:
 
 $$
-\sqrt{\frac{\log(1/0.05)}{2\times10{,}000}}
-=0.01224
-\quad\text{(about 1.224 percentage points).}
+S=(\alpha I+\beta\Phi^\top\Phi)^{-1},
+\qquad m=\beta S\Phi^\top y.
 $$
 
-That leaves **97.866%**. Rounding downward, we can report:
-
-> **With 95% confidence, the fixed range covers at least 97.8% of bottles
-> from this process.**
+Each row of $\Phi$ is $[1,x_i]$. These are direct calculation rules, with no
+sampling approximation required.
 
 ```python
-allowance = math.sqrt(math.log(1/FAILURE_CHANCE) / (2*TEST_COUNT))
-lower_bound = max(0, measured_coverage - allowance)
-reported_percent = math.floor(1000*lower_bound) / 10  # round downward
-print(f"Sampling allowance: {100*allowance:.3f} percentage points")
-print(f"With 95% confidence, coverage is at least {reported_percent:.1f}%.")
+precision = alpha*np.eye(2) + beta*Phi.T@Phi
+S = np.linalg.solve(precision, np.eye(2))
+m = np.linalg.solve(precision, beta*Phi.T@y_train)
+print(f"Estimated line: y = {m[0]:.3f} + {m[1]:.3f} x")
 ```
 
-The chance that this testing procedure overstates the true coverage is at
-most 5%. This statement needs independent test bottles from the same process
-as future bottles, and a range and test count fixed before checking them.
-It **does not require the Bayesian model to be correct**.
-[Bound reference](https://www.cs.rpi.edu/academics/courses/spring06/random/hoefding.pdf).
+The fitted line is **$y\approx1.159+1.916x$**.
+The distribution $\mathcal N(m,S)$ is our *posterior*: what we believe about
+the coefficients after learning from the observations.
 
-That is how the two pieces give rigor: **the model supplies the range;
-fresh data and Hoeffding supply a defensible statement about its coverage.**
-They validate this coverage property, not every assumption in the model.
+## 3. Predict a new reading
 
-Four times as many test bottles halves the allowance. More testing measures
-coverage more precisely; improving or widening the range changes coverage.
-If you change the range after checking it, use fresh data for the next check.
+At a new input, write $\phi(x)=[1,x]^\top$. The next reading has the
+*posterior predictive distribution*
 
-## See the range
+$$
+y_{\rm new}\mid x,\text{data}\sim
+\mathcal N\!\left(\phi(x)^\top m,\;
+\underbrace{\beta^{-1}}_{\text{new measurement noise}}
++\underbrace{\phi(x)^\top S\phi(x)}_{\text{uncertainty about the line}}\right).
+$$
 
-The picture shows the first 100 test bottles. The calculation used all 10,000.
+Both variance terms matter. A range for the mean line alone would leave out
+the noise in the next reading.
+
+Take the middle 99% of this Gaussian: its mean plus or minus
+$2.576$ predictive standard deviations.
+[Bishop's calculation](https://www.microsoft.com/en-us/research/wp-content/uploads/2016/05/prml-slides-3.pdf).
 
 ```python
-shown = 100
-fig, ax = plt.subplots(figsize=(8, 3.8))
-ax.axhspan(low, high, color="#d6e9f3", label="Model's fixed 99% range")
-ax.scatter(np.arange(1, shown+1), test[:shown], s=22,
-           c=np.where(inside[:shown], "#156582", "#c44932"))
-ax.set(xlabel="New bottle number", ylabel="Fill (mL)",
-       title="Does the next bottle fall inside the range?")
+z = NormalDist().inv_cdf(0.995)
+
+def predict(x):
+    F = features(x)
+    mean = F@m
+    line_variance = np.sum((F@S)*F, axis=1)
+    prediction_sd = np.sqrt(1/beta + line_variance)
+    return mean, np.sqrt(line_variance), prediction_sd
+
+mean, line_sd, prediction_sd = predict([0.5])
+low, high = mean-z*prediction_sd, mean+z*prediction_sd
+print(f"At x = 0.5, predict {mean[0]:.3f}")
+print(f"99% prediction interval: [{low[0]:.3f}, {high[0]:.3f}]")
+```
+
+At **$x=0.5$**, the prediction is **2.117** and the interval is about
+**[0.777, 3.457]**. The interval changes with $x$.
+
+The darker band below shows uncertainty about the mean line. The wider,
+lighter band includes the variation in new readings. Each vertical slice
+shows an interval at that input.
+
+```python
+grid = np.linspace(-1, 1, 250)
+center, line_sd, prediction_sd = predict(grid)
+fig, ax = plt.subplots(figsize=(8, 4.5))
+ax.fill_between(grid, center-z*prediction_sd, center+z*prediction_sd,
+                color="#d6e9f3", label="99% range for a new reading")
+ax.fill_between(grid, center-z*line_sd, center+z*line_sd,
+                color="#8ebdce", label="99% range for the mean line")
+ax.plot(grid, center, color="#156582", lw=2, label="Estimated line")
+ax.scatter(x_train, y_train, color="#334652", s=25, label="20 training readings")
+ax.set(xlabel="Input x", ylabel="Reading y", title="Two sources of uncertainty")
 ax.spines[["top", "right"]].set_visible(False)
-ax.legend(frameon=False, loc="lower right")
+ax.legend(frameon=False, fontsize=9, loc="upper left")
 fig.tight_layout()
 plt.show()
 ```
 
-![First 100 new bottles and the fixed prediction range](results/demo/bottle-interval.png)
+![Bayesian mean line and prediction intervals](results/demo/regression-interval.png)
+
+## 4. Check coverage on fresh pairs
+
+Freeze the fitted prediction rule. For each new input, form its interval
+and check whether its observed output lands inside. Do not refit during this
+check.
+
+The test inputs use the same distribution as future inputs: uniform on
+$[-1,1]$. Here the sensor is simulated. For a real application, use new
+measurements from the actual process.
+
+```python
+x_test, y_test = sensor(test_rng, TEST_COUNT)
+center, _, prediction_sd = predict(x_test)
+inside = np.abs(y_test-center) <= z*prediction_sd
+hits = int(inside.sum())
+coverage = hits / TEST_COUNT
+print(f"Inside their prediction intervals: {hits:,} of {TEST_COUNT:,}")
+print(f"Measured coverage: {100*coverage:.2f}%")
+```
+
+**9,902 of 10,000** readings are inside: **99.02%**.
+The model's 99% was a prediction under its assumptions. This is a separate
+measurement of how often the intervals work.
+
+## 5. Make allowance for sampling error
+
+Hoeffding gives a one-sided allowance of
+
+$$
+\sqrt{\frac{\log(1/0.05)}{2\times10{,}000}}
+\approx0.01224
+\quad\text{(1.224 percentage points).}
+$$
+
+Subtract it from measured coverage. Rounding the result downward:
+
+> **With 95% confidence, this prediction rule covers at least 97.7% of
+> new input–output pairs from the same population.**
+
+```python
+allowance = math.sqrt(math.log(1/FAILURE_CHANCE) / (2*TEST_COUNT))
+lower_bound = max(0, coverage-allowance)
+reported_percent = math.floor(1000*lower_bound) / 10
+print(f"Hoeffding allowance: {100*allowance:.3f} percentage points")
+print(f"With 95% confidence, overall coverage is at least {reported_percent:.1f}%.")
+```
+
+This statement requires independent test pairs, the same population for
+future predictions, and a prediction rule and test count fixed before
+checking outcomes. It remains valid even if the Bayesian model is wrong.
+It measures coverage averaged over the input population; it does not certify
+every input value separately.
+[Hoeffding reference](https://www.cs.rpi.edu/academics/courses/spring06/random/hoefding.pdf).
+
+The Bayesian calculation supplies the intervals. Independent observations
+and Hoeffding supply a defensible coverage statement. Four times as many
+test pairs halves the sampling allowance; changing the prediction rule
+requires a fresh check.
