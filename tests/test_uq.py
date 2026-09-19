@@ -1,4 +1,4 @@
-"""Check the Bayesian regression calculation and independent coverage measurement."""
+"""Check the model proposal and the model-independent, fixed-input validation."""
 
 from contextlib import redirect_stdout
 import io
@@ -16,32 +16,58 @@ from uq import fit_posterior, hoeffding_lower, hoeffding_margin, posterior_predi
 
 
 class TutorialTests(unittest.TestCase):
-    def test_posterior_matches_a_hand_calculation_with_correlated_weights(self):
-        # Phi = [[1,0],[1,1]]; precision = [[3,1],[1,2]].
-        # Its inverse is [[2,-1],[-1,3]]/5 and posterior mean is [1,1].
+    def test_posterior_matches_hand_calculation_and_handles_collinear_inputs(self):
+        # Phi = [[1,0],[1,1]], precision = [[3,1],[1,2]], posterior mean = [1,1].
         posterior = fit_posterior([0, 1], [1, 3], alpha=1, noise_sd=1)
         np.testing.assert_allclose(posterior["covariance"], [[0.4, -0.2], [-0.2, 0.6]])
         np.testing.assert_allclose(posterior["mean"], [1, 1])
+        self.assertAlmostEqual(posterior_predictive(0.5, posterior)["mean"], 1.5)
+        collinear = fit_posterior([0, 0, 0], [1, 1, 1])
+        np.testing.assert_allclose(collinear["mean"], [12 / 12.25, 0])
+        np.testing.assert_allclose(collinear["covariance"], [[1 / 12.25, 0], [0, 4]])
+
+    def test_predictive_interval_adds_new_observation_noise(self):
+        posterior = fit_posterior([0, 1], [1, 3], alpha=1, noise_sd=1)
         prediction = posterior_predictive(0.5, posterior)
-        self.assertAlmostEqual(prediction["mean"], 1.5)
-        self.assertAlmostEqual(prediction["mean_sd"]**2, 0.35)
-
-    def test_predictive_interval_adds_observation_noise(self):
-        posterior = fit_posterior([-1, 0, 1], [-1, 1, 3])
-        prediction = posterior_predictive(np.array([-1, 0, 1]), posterior)
-        np.testing.assert_allclose(prediction["predictive_sd"]**2,
-                                   0.25 + prediction["mean_sd"]**2)
+        # [1, .5] S [1, .5]^T = .35; observation variance = 1.
+        self.assertAlmostEqual(prediction["predictive_sd"]**2, 1.35)
         half_width = (prediction["upper"] - prediction["lower"]) / 2
-        np.testing.assert_allclose(half_width / prediction["predictive_sd"],
-                                   NormalDist().inv_cdf(0.995))
-        self.assertTrue(np.all(prediction["predictive_sd"] > prediction["mean_sd"]))
-        self.assertTrue(np.all(prediction["lower"] < prediction["mean_lower"]))
-        self.assertTrue(np.all(prediction["upper"] > prediction["mean_upper"]))
+        self.assertAlmostEqual(half_width / prediction["predictive_sd"], NormalDist().inv_cdf(0.995))
+        self.assertEqual(set(prediction), {"mean", "predictive_sd", "lower", "upper", "nominal_level"})
 
-    def test_gaussian_prior_keeps_collinear_training_fit_well_defined(self):
-        posterior = fit_posterior([0, 0, 0], [1, 1, 1])
-        np.testing.assert_allclose(posterior["mean"], [12 / 12.25, 0])
-        np.testing.assert_allclose(posterior["covariance"], [[1 / 12.25, 0], [0, 4]])
+    def test_all_validation_responses_come_from_the_fixed_query(self):
+        report, data = run_example()
+        small, small_data = run_example(test_size=100)
+        self.assertEqual(report["posterior"], small["posterior"])
+        self.assertEqual(report["prediction"], small["prediction"])
+        for key in ("train_x", "train_y"):
+            np.testing.assert_array_equal(data[key], small_data[key])
+        np.testing.assert_array_equal(data["test_y"][:100], small_data["test_y"])
+        train_stream, test_stream = np.random.SeedSequence(20260919).spawn(2)
+        train_rng, test_rng = np.random.default_rng(train_stream), np.random.default_rng(test_stream)
+        train_x = train_rng.uniform(-1, 1, 20)
+        train_y = 1 + 2 * train_x + 2 * train_x**2 + train_rng.normal(0, 0.5, 20)
+        np.testing.assert_array_equal(data["train_x"], train_x)
+        np.testing.assert_array_equal(data["train_y"], train_y)
+        np.testing.assert_array_equal(data["test_x"], np.full(10000, 0.5))
+        np.testing.assert_array_equal(data["test_y"], 2.5 + test_rng.normal(0, 0.5, 10000))
+
+    def test_default_report_counts_one_frozen_interval_and_matches_example(self):
+        report, data = run_example()
+        prediction, measured = report["prediction"], report["validation"]
+        covered = (prediction["lower"] <= data["test_y"]) & (data["test_y"] <= prediction["upper"])
+        np.testing.assert_array_equal(data["covered"], covered)
+        np.testing.assert_allclose(report["posterior"]["mean"], [1.7212065493873854, 2.26961763878656])
+        np.testing.assert_allclose([prediction["lower"], prediction["upper"]],
+                                   [1.5163904474883725, 4.195640290072959])
+        self.assertEqual(measured["hits"], int(covered.sum()))
+        self.assertEqual(measured["hits"], 9745)
+        self.assertEqual(measured["size"], 10000)
+        self.assertAlmostEqual(measured["lower_bound"], 0.962261265846596)
+        self.assertEqual(measured["confidence"], 0.95)
+        self.assertEqual(report["schema_version"], 5)
+        self.assertIn("One prespecified query", measured["confidence_scope"])
+        json.dumps(report, allow_nan=False)
 
     def test_hoeffding_lower_bound_has_exact_binomial_error_at_most_delta(self):
         self.assertAlmostEqual(hoeffding_margin(10000), sqrt(log(20) / 20000))
@@ -51,37 +77,16 @@ class TutorialTests(unittest.TestCase):
                             for k in range(n + 1) if hoeffding_lower(k, n) > p)
                 self.assertLessEqual(error, 0.05 + 1e-14)
 
-    def test_separate_streams_keep_fitted_rule_fixed_when_test_size_changes(self):
-        first, data = run_example()
-        repeated, repeated_data = run_example()
-        small, small_data = run_example(test_size=100)
-        self.assertEqual(first, repeated)
-        self.assertEqual(first["posterior"], small["posterior"])
-        self.assertEqual(first["prediction"], small["prediction"])
-        for key in ("train_x", "train_y"):
-            np.testing.assert_array_equal(data[key], small_data[key])
-        for key in data:
-            np.testing.assert_array_equal(data[key], repeated_data[key])
-        train_stream, test_stream = np.random.SeedSequence(20260919).spawn(2)
-        for stream, prefix, size in ((train_stream, "train", 20), (test_stream, "test", 10000)):
-            rng = np.random.default_rng(stream)
-            expected_x = rng.uniform(-1, 1, size)
-            expected_y = 1 + 2 * expected_x + rng.normal(0, 0.5, size)
-            np.testing.assert_array_equal(data[prefix + "_x"], expected_x)
-            np.testing.assert_array_equal(data[prefix + "_y"], expected_y)
-
-    def test_report_counts_each_input_specific_interval(self):
-        report, data = run_example()
-        prediction = posterior_predictive(data["test_x"], report["posterior"])
-        expected = (prediction["lower"] <= data["test_y"]) & (data["test_y"] <= prediction["upper"])
-        measured = report["validation"]
-        np.testing.assert_array_equal(data["covered"], expected)
-        self.assertEqual(measured["hits"], int(expected.sum()))
-        self.assertEqual(measured["size"], 10000)
-        self.assertEqual(measured["estimate"], measured["hits"] / 10000)
-        self.assertAlmostEqual(measured["lower_bound"], measured["estimate"] - measured["margin"])
-        self.assertEqual(measured["confidence"], 0.95)
-        json.dumps(report, allow_nan=False)
+    def test_bound_uses_only_coverage_indicators_even_for_wrong_models(self):
+        # Deliberately non-Gaussian responses; every proposal was fixed first.
+        responses = np.array([-3, -1, 0, 0, 0, 0, 0, 1, 8, 100])
+        for proposal in ((-1, 1), (-1000, -900), (-1000, 1000)):
+            hits = int(((proposal[0] <= responses) & (responses <= proposal[1])).sum())
+            expected = max(0, hits / len(responses) - sqrt(log(20) / (2 * len(responses))))
+            self.assertEqual(hoeffding_lower(hits, len(responses)), expected)
+        report, _ = run_example()
+        self.assertNotEqual(report["model"]["actual_mean_function"],
+                            report["model"]["assumed_mean_function"])
 
     def test_invalid_inputs_and_zero_hits(self):
         self.assertEqual(hoeffding_lower(0, 100), 0)
@@ -94,26 +99,28 @@ class TutorialTests(unittest.TestCase):
         for hits in (-1, 101, True, 2.5):
             with self.assertRaises(ValueError):
                 hoeffding_lower(hits, 100)
+        for query in (float("nan"), float("inf"), True):
+            with self.assertRaises(ValueError):
+                run_example(query=query)
         for x, y in (([], []), ([[1]], [1]), ([0, 1], [1]), ([float("nan")], [1])):
             with self.assertRaises(ValueError):
                 fit_posterior(x, y)
         for kwargs in ({"alpha": 0}, {"noise_sd": 0}):
             with self.assertRaises(ValueError):
                 fit_posterior([0], [1], **kwargs)
-        with self.assertRaises(ValueError):
-            posterior_predictive(float("inf"), fit_posterior([0], [1]))
 
-    def test_cli_writes_the_report_and_one_figure(self):
+    def test_cli_writes_report_and_single_input_figure(self):
         with tempfile.TemporaryDirectory() as folder, redirect_stdout(io.StringIO()) as output:
-            report = main(["--test-size", "250", "--output-dir", folder])
+            report = main(["--test-size", "250", "--query", "0.25", "--output-dir", folder])
             self.assertEqual(json.loads((Path(folder) / "report.json").read_text()), report)
+            self.assertEqual(report["prediction"]["x"], 0.25)
             self.assertEqual({p.name for p in Path(folder).iterdir()},
-                             {"report.json", "regression-interval.png", "regression-interval.svg"})
+                             {"report.json", "point-validation.png", "point-validation.svg"})
             for extension in ("png", "svg"):
-                self.assertGreater((Path(folder) / f"regression-interval.{extension}").stat().st_size, 1000)
-            self.assertIn("At 95% confidence", output.getvalue())
+                self.assertGreater((Path(folder) / f"point-validation.{extension}").stat().st_size, 1000)
             minimum_percent = floor(1000 * report["validation"]["lower_bound"]) / 10
             self.assertIn(f"at least {minimum_percent:.1f}%", output.getvalue())
+            self.assertIn("one prespecified input", output.getvalue())
 
 
 if __name__ == "__main__":

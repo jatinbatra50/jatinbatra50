@@ -1,10 +1,11 @@
-# Keep the explanation concrete
+# Keep the guarantee point-specific
 
-Explain one Bayesian regression example in ordinary language. Distinguish
-uncertainty about the mean line from variation in a new observation. Keep the
-model's predictive probability separate from confidence in measured coverage.
+The model generates a candidate interval. The only asserted real coverage
+guarantee comes from fresh measurements at the chosen input and a
+concentration bound. Keep the nonlinear true sensor separate from the
+assumed Gaussian linear model.
 
-`TUTORIAL.md` is the notebook source. To regenerate and check the project:
+`TUTORIAL.md` is the notebook source. Regenerate and check with:
 
 ```bash
 python scripts/build_tutorial_notebook.py
@@ -13,9 +14,12 @@ python experiments.py
 python -m unittest discover -s tests -v
 ```
 
-Use independent training and validation pairs. Freeze the fitted predictor
-and test count before checking coverage. The coverage claim averages over
-the stated input distribution; it is not a guarantee for each individual input.
+Freeze the query, proposed interval, and measurement count before validation.
+Every validation response must be drawn at that query. Do not substitute
+random-input coverage for conditional coverage at a point, or posterior
+samples for measurements from the actual process.
 
-Preserve full precision in calculations and round a reported guaranteed
-minimum downward. The notebook must work without importing project files.
+State that confidence applies to one chosen query and interval. Round
+reported lower guarantees downward. Plot only the conditional validation
+experiment and candidate endpoints; no mean or prediction bands across inputs.
+Keep the notebook independent of project imports.

@@ -1,10 +1,10 @@
 {
-  "schema_version": 4,
+  "schema_version": 5,
   "model": {
-    "actual_intercept": 1.0,
-    "actual_slope": 2.0,
+    "actual_mean_function": "1 + 2*x + 2*x**2",
     "actual_noise_sd": 0.5,
-    "input_distribution": "Uniform(-1, 1)",
+    "assumed_mean_function": "intercept + slope*x",
+    "training_input_distribution": "Uniform(-1, 1)",
     "prior_mean": [
       0.0,
       0.0
@@ -27,13 +27,14 @@
     "seed": 20260919,
     "training_size": 20,
     "test_size": 10000,
+    "query": 0.5,
     "delta": 0.05,
     "random_streams": "SeedSequence.spawn(2): train, test"
   },
   "posterior": {
     "mean": [
-      1.1592958067288044,
-      1.9155796969667587
+      1.7212065493873854,
+      2.26961763878656
     ],
     "covariance": [
       [
@@ -49,23 +50,23 @@
     "noise_sd": 0.5
   },
   "prediction": {
-    "mean": 2.1170856552121835,
-    "mean_sd": 0.1431020825013647,
+    "mean": 2.8560153687806653,
     "predictive_sd": 0.5200751926560498,
-    "lower": 0.7774607339198907,
-    "upper": 3.4567105765044763,
-    "mean_lower": 1.748479117706296,
-    "mean_upper": 2.485692192718071,
-    "probability": 0.99,
+    "lower": 1.5163904474883725,
+    "upper": 4.195640290072959,
+    "nominal_level": 0.99,
     "x": 0.5
   },
   "validation": {
     "size": 10000,
-    "hits": 9902,
-    "estimate": 0.9902,
+    "hits": 9745,
+    "estimate": 0.9745,
     "margin": 0.012238734153404082,
-    "lower_bound": 0.9779612658465959,
+    "lower_bound": 0.962261265846596,
     "confidence": 0.95,
-    "target": "Average coverage over fresh (X, Y) pairs from the same process"
+    "target": "Conditional coverage P(Y in the frozen interval | X = query)",
+    "query": 0.5,
+    "confidence_scope": "One prespecified query and one frozen interval",
+    "sampling": "Independent fresh responses at the same fixed query"
   }
 }

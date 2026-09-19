@@ -1,33 +1,25 @@
-# Learn a line, predict a range, check its coverage
+# Validate an interval at one chosen input
 
-A sensor reading $y$ depends on an input $x$. We will learn a straight line,
-put a range around its prediction, and check how often new readings fall
-inside their ranges.
+Fix **$x_*=0.5$**. We want a range for the next response at this input.
 
-This is Bayesian linear regression with a Gaussian prior and Gaussian error,
-as in Bishop's *Pattern Recognition and Machine Learning*, Section 3.3.
-The noise level is fixed for this example.
+A Bayesian model will propose the range. **Only fresh measurements and a
+concentration bound will support its actual coverage.** The experiment below
+deliberately uses a wrong linear model.
 
-## 1. Start with a model
+## 1. Separate the sensor from the model
 
-Our model is
+The actual sensor is nonlinear:
 
-$$y=w_0+w_1x+\varepsilon.$$
+$$Y=1+2x+2x^2+\varepsilon,\qquad\varepsilon\sim\mathcal N(0,0.5^2).$$
 
-We do not know the intercept $w_0$ or slope $w_1$. Give each a Gaussian prior
-with mean 0 and standard deviation 2. Assume independent Gaussian measurement
-noise with standard deviation 0.5.
+Our working model still assumes a straight line, Gaussian coefficient prior
+$\mathbf w\sim\mathcal N(0,4I)$, and Gaussian noise of standard deviation 0.5.
+There is no coefficient pair that makes this line model equal to the true
+mean curve. We use its calculations to propose an interval, without assuming
+its model or prior describes reality.
 
-In Bishop's notation,
-
-$$
-\mathbf w\sim\mathcal N(\mathbf0,\alpha^{-1}I),\qquad
-\varepsilon\sim\mathcal N(0,\beta^{-1}),\qquad
-\alpha=0.25,\quad\beta=4.
-$$
-
-Here $\alpha$ and $\beta$ are inverse variances. Keep both fixed.
-Generate 20 training pairs from a pretend sensor so the example runs anywhere.
+All observations here are simulated. In an application, the validation
+measurements must come from the actual system.
 
 ```python
 import math
@@ -35,169 +27,141 @@ from statistics import NormalDist
 import numpy as np
 import matplotlib.pyplot as plt
 
-TEST_COUNT = 10_000       # choose before looking at test results
-FAILURE_CHANCE = 0.05     # for the separate coverage check
-alpha, beta = 0.25, 4.0
+QUERY = 0.5              # fix the input before validation
+TEST_COUNT = 10_000       # fix the measurement count too
+FAILURE_CHANCE = 0.05
 
-train_rng, test_rng = [
+train_rng, validation_rng = [
     np.random.default_rng(s)
     for s in np.random.SeedSequence(20260919).spawn(2)
 ]
 
-def sensor(rng, n):
-    x = rng.uniform(-1, 1, n)
-    y = 1 + 2*x + rng.normal(0, 0.5, n)
-    return x, y
+def actual_mean(x):
+    return 1 + 2*x + 2*x*x
 
-def features(x):
-    x = np.atleast_1d(x)
-    return np.column_stack([np.ones(len(x)), x])
-
-x_train, y_train = sensor(train_rng, 20)
-Phi = features(x_train)
+x_train = train_rng.uniform(-1, 1, 20)
+y_train = actual_mean(x_train) + train_rng.normal(0, 0.5, 20)
 ```
 
-## 2. Learn which lines are plausible
+## 2. Propose an interval at this input
 
-After seeing the data, the coefficients still have a Gaussian distribution.
-Its mean $m$ gives our estimated intercept and slope; its covariance $S$
-describes their remaining uncertainty:
+Use the same Gaussian Bayesian regression calculation as in Bishop.
+Each row of $\Phi$ is $[1,x_i]$. The following code computes the working
+model's posterior mean and covariance, then its predictive interval at
+$0.5$.
 
-$$
-S=(\alpha I+\beta\Phi^\top\Phi)^{-1},
-\qquad m=\beta S\Phi^\top y.
-$$
-
-Each row of $\Phi$ is $[1,x_i]$. These are direct calculation rules, with no
-sampling approximation required.
+Its nominal 99% level is a setting in this calculation, **not a real-world
+coverage guarantee**.
+[Proposal calculation reference](https://www.microsoft.com/en-us/research/wp-content/uploads/2016/05/prml-slides-3.pdf).
 
 ```python
+alpha, beta = 0.25, 4.0
+Phi = np.column_stack([np.ones(len(x_train)), x_train])
 precision = alpha*np.eye(2) + beta*Phi.T@Phi
 S = np.linalg.solve(precision, np.eye(2))
 m = np.linalg.solve(precision, beta*Phi.T@y_train)
-print(f"Estimated line: y = {m[0]:.3f} + {m[1]:.3f} x")
-```
 
-The fitted line is **$y\approx1.159+1.916x$**.
-The distribution $\mathcal N(m,S)$ is our *posterior*: what we believe about
-the coefficients after learning from the observations.
-
-## 3. Predict a new reading
-
-At a new input, write $\phi(x)=[1,x]^\top$. The next reading has the
-*posterior predictive distribution*
-
-$$
-y_{\rm new}\mid x,\text{data}\sim
-\mathcal N\!\left(\phi(x)^\top m,\;
-\underbrace{\beta^{-1}}_{\text{new measurement noise}}
-+\underbrace{\phi(x)^\top S\phi(x)}_{\text{uncertainty about the line}}\right).
-$$
-
-Both variance terms matter. A range for the mean line alone would leave out
-the noise in the next reading.
-
-Take the middle 99% of this Gaussian: its mean plus or minus
-$2.576$ predictive standard deviations.
-[Bishop's calculation](https://www.microsoft.com/en-us/research/wp-content/uploads/2016/05/prml-slides-3.pdf).
-
-```python
+phi = np.array([1.0, QUERY])
+center = float(phi@m)
+proposal_sd = math.sqrt(1/beta + phi@S@phi)
 z = NormalDist().inv_cdf(0.995)
-
-def predict(x):
-    F = features(x)
-    mean = F@m
-    line_variance = np.sum((F@S)*F, axis=1)
-    prediction_sd = np.sqrt(1/beta + line_variance)
-    return mean, np.sqrt(line_variance), prediction_sd
-
-mean, line_sd, prediction_sd = predict([0.5])
-low, high = mean-z*prediction_sd, mean+z*prediction_sd
-print(f"At x = 0.5, predict {mean[0]:.3f}")
-print(f"99% prediction interval: [{low[0]:.3f}, {high[0]:.3f}]")
+low, high = center-z*proposal_sd, center+z*proposal_sd
+print(f"At x = {QUERY}, the proposed interval is [{low:.3f}, {high:.3f}]")
 ```
 
-At **$x=0.5$**, the prediction is **2.117** and the interval is about
-**[0.777, 3.457]**. The interval changes with $x$.
+The candidate is **[1.516, 4.196]**. Freeze it now.
 
-The darker band below shows uncertainty about the mean line. The wider,
-lighter band includes the variation in new readings. Each vertical slice
-shows an interval at that input.
+## 3. Repeat the measurement at exactly the same input
+
+Obtain 10,000 independent responses at **$x=0.5$**, and count how many land
+inside the candidate. These are new responses from the sensor, not samples
+from the fitted Bayesian model.
 
 ```python
-grid = np.linspace(-1, 1, 250)
-center, line_sd, prediction_sd = predict(grid)
-fig, ax = plt.subplots(figsize=(8, 4.5))
-ax.fill_between(grid, center-z*prediction_sd, center+z*prediction_sd,
-                color="#d6e9f3", label="99% range for a new reading")
-ax.fill_between(grid, center-z*line_sd, center+z*line_sd,
-                color="#8ebdce", label="99% range for the mean line")
-ax.plot(grid, center, color="#156582", lw=2, label="Estimated line")
-ax.scatter(x_train, y_train, color="#334652", s=25, label="20 training readings")
-ax.set(xlabel="Input x", ylabel="Reading y", title="Two sources of uncertainty")
+validation_y = actual_mean(QUERY) + validation_rng.normal(0, 0.5, TEST_COUNT)
+inside = (validation_y >= low) & (validation_y <= high)
+hits = int(inside.sum())
+observed_coverage = hits / TEST_COUNT
+print(f"At x = {QUERY}: {hits:,} of {TEST_COUNT:,} responses inside")
+print(f"Measured conditional coverage: {100*observed_coverage:.2f}%")
+```
+
+**9,745 of 10,000** are inside: **97.45% measured coverage at this input**.
+
+## 4. Put a rigorous lower bound on that coverage
+
+Let $p_*$ be the actual probability that a new response at $x=0.5$ falls
+inside the frozen interval. Every validation response supplies an independent
+0-or-1 observation with mean $p_*$.
+
+The one-sided Hoeffding bound gives a 95% lower confidence bound:
+
+$$
+p_*\ \geq\ \widehat p_*-
+\sqrt{\frac{\log(1/0.05)}{2N}}.
+$$
+
+The allowance is **1.224 percentage points**, leaving **96.226%**.
+Rounding downward, report:
+
+> At input x = 0.5, with 95% confidence, the fixed interval [1.516, 4.196]
+> covers at least **96.2% of future responses at this input**.
+
+Endpoint values in this sentence are displayed rounded; the calculation
+uses their full precision.
+
+```python
+allowance = math.sqrt(math.log(1/FAILURE_CHANCE) / (2*TEST_COUNT))
+lower_bound = max(0, observed_coverage-allowance)
+reported_percent = math.floor(1000*lower_bound) / 10
+print(f"Hoeffding allowance: {100*allowance:.3f} percentage points")
+print(f"At x = {QUERY}, coverage is at least {reported_percent:.1f}% "
+      "with 95% confidence.")
+```
+
+The 95% confidence concerns the validation experiment: the chance this
+procedure overstates $p_*$ is at most 5%. The 96.2% concerns future responses
+at the chosen input. **Neither the linear model nor the Gaussian prior needs
+to be correct for this statement.**
+[Hoeffding reference](https://www.cs.rpi.edu/academics/courses/spring06/random/hoefding.pdf).
+
+## 5. Plot only what was tested
+
+The histogram shows repeated responses at $x=0.5$. The two dashed lines
+mark the proposed endpoints. There is no band across untested input values.
+
+```python
+fig, ax = plt.subplots(figsize=(8, 4))
+ax.hist(validation_y, bins=45, color="#cbd5e1", edgecolor="white")
+ax.axvline(low, color="#b85a24", ls="--", lw=2, label="Proposed endpoints")
+ax.axvline(high, color="#b85a24", ls="--", lw=2)
+ax.set(xlabel=f"Response Y in repeated measurements at x = {QUERY}",
+       ylabel="Number of measurements", title="Validate one fixed input")
+ax.text(0.97, 0.94,
+        f"{hits:,} / {TEST_COUNT:,} inside\n"
+        f"Measured: {100*observed_coverage:.2f}%\n"
+        f"95% lower bound: {reported_percent:.1f}%",
+        transform=ax.transAxes, ha="right", va="top", fontsize=10,
+        bbox={"facecolor": "white", "edgecolor": "none", "alpha": 0.9})
 ax.spines[["top", "right"]].set_visible(False)
-ax.legend(frameon=False, fontsize=9, loc="upper left")
+ax.legend(frameon=True, facecolor="white", edgecolor="none", framealpha=1,
+          loc="upper left")
 fig.tight_layout()
 plt.show()
 ```
 
-![Bayesian mean line and prediction intervals](results/demo/regression-interval.png)
+![Conditional validation responses and candidate endpoints](results/demo/point-validation.png)
 
-## 4. Check coverage on fresh pairs
+**Scope:** this statement certifies one chosen input and interval. At another
+input, run a corresponding conditional experiment. Separate 95% statements
+are not a simultaneous 95% guarantee across inputs.
 
-Freeze the fitted prediction rule. For each new input, form its interval
-and check whether its observed output lands inside. Do not refit during this
-check.
+**Required access:** you need independent measurements at the chosen input,
+or valid access to its true conditional distribution. A generic test set
+with randomly located continuous inputs does not provide this guarantee at
+an exact new input without additional structure. A simulator certifies only
+the process it faithfully represents.
 
-The test inputs use the same distribution as future inputs: uniform on
-$[-1,1]$. Here the sensor is simulated. For a real application, use new
-measurements from the actual process.
-
-```python
-x_test, y_test = sensor(test_rng, TEST_COUNT)
-center, _, prediction_sd = predict(x_test)
-inside = np.abs(y_test-center) <= z*prediction_sd
-hits = int(inside.sum())
-coverage = hits / TEST_COUNT
-print(f"Inside their prediction intervals: {hits:,} of {TEST_COUNT:,}")
-print(f"Measured coverage: {100*coverage:.2f}%")
-```
-
-**9,902 of 10,000** readings are inside: **99.02%**.
-The model's 99% was a prediction under its assumptions. This is a separate
-measurement of how often the intervals work.
-
-## 5. Make allowance for sampling error
-
-Hoeffding gives a one-sided allowance of
-
-$$
-\sqrt{\frac{\log(1/0.05)}{2\times10{,}000}}
-\approx0.01224
-\quad\text{(1.224 percentage points).}
-$$
-
-Subtract it from measured coverage. Rounding the result downward:
-
-> **With 95% confidence, this prediction rule covers at least 97.7% of
-> new input–output pairs from the same population.**
-
-```python
-allowance = math.sqrt(math.log(1/FAILURE_CHANCE) / (2*TEST_COUNT))
-lower_bound = max(0, coverage-allowance)
-reported_percent = math.floor(1000*lower_bound) / 10
-print(f"Hoeffding allowance: {100*allowance:.3f} percentage points")
-print(f"With 95% confidence, overall coverage is at least {reported_percent:.1f}%.")
-```
-
-This statement requires independent test pairs, the same population for
-future predictions, and a prediction rule and test count fixed before
-checking outcomes. It remains valid even if the Bayesian model is wrong.
-It measures coverage averaged over the input population; it does not certify
-every input value separately.
-[Hoeffding reference](https://www.cs.rpi.edu/academics/courses/spring06/random/hoefding.pdf).
-
-The Bayesian calculation supplies the intervals. Independent observations
-and Hoeffding supply a defensible coverage statement. Four times as many
-test pairs halves the sampling allowance; changing the prediction rule
-requires a fresh check.
+More measurements reduce the statistical allowance. They do not repair a
+poor proposed interval. If you revise the interval after checking it, validate
+the revision on fresh responses.

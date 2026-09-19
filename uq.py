@@ -1,4 +1,4 @@
-"""Bayesian linear regression, followed by an independent coverage measurement."""
+"""Propose one interval with a Bayesian model; validate it at one fixed input."""
 
 from math import isfinite, log, sqrt
 from numbers import Integral, Real
@@ -51,10 +51,10 @@ def fit_posterior(x, y, alpha=0.25, noise_sd=0.5):
 
 
 def posterior_predictive(x, posterior, probability=0.99):
-    """At each x, return a central interval for a new observation.
+    """Return the Bayesian model's central interval for a new observation.
 
-    The predictive variance adds observation noise to uncertainty about the
-    fitted line. mean_lower/mean_upper describe only the latter uncertainty.
+    This is a proposal: its nominal probability is a model calculation, not a
+    guarantee about the real process. Predictive variance includes new noise.
     Scalar x returns scalar NumPy values; a vector x returns arrays.
     """
     x = np.asarray(x, dtype=float)
@@ -64,24 +64,27 @@ def posterior_predictive(x, posterior, probability=0.99):
     phi = np.stack((np.ones_like(x), x), axis=-1)
     mean = phi @ np.asarray(posterior["mean"])
     mean_variance = np.einsum("...i,ij,...j->...", phi, posterior["covariance"], phi)
-    mean_sd = np.sqrt(mean_variance)
     predictive_sd = np.sqrt(posterior["noise_sd"]**2 + mean_variance)
     z = NormalDist().inv_cdf(0.5 + probability / 2)
-    return {"mean": mean, "mean_sd": mean_sd, "predictive_sd": predictive_sd,
+    return {"mean": mean, "predictive_sd": predictive_sd,
             "lower": mean - z * predictive_sd, "upper": mean + z * predictive_sd,
-            "mean_lower": mean - z * mean_sd, "mean_upper": mean + z * mean_sd,
-            "probability": probability}
+            "nominal_level": probability}
 
 
 def hoeffding_margin(test_size, delta=0.05):
-    """One-sided error allowance for independent, same-source test pairs."""
+    """One-sided error allowance for independent Bernoulli measurements."""
     test_size = _count(test_size, "test_size")
     delta = _probability(delta, "delta")
     return sqrt(log(1 / delta) / (2 * test_size))
 
 
 def hoeffding_lower(hits, test_size, delta=0.05):
-    """A (1-delta) lower bound on the frozen interval rule's average coverage."""
+    """Lower confidence bound from independent repeats at a fixed query.
+
+    The query, interval, sample size and delta must be fixed before inspecting
+    validation responses, all drawn from the future response law at that query.
+    No fitted model or prior enters this calculation.
+    """
     test_size = _count(test_size, "test_size")
     hits = _count(hits, "hits", minimum=0)
     if hits > test_size:
@@ -89,43 +92,56 @@ def hoeffding_lower(hits, test_size, delta=0.05):
     return max(0.0, hits / test_size - hoeffding_margin(test_size, delta))
 
 
-def run_example(seed=20260919, test_size=10000):
+def run_example(seed=20260919, test_size=10000, query=0.5):
     """Return (JSON-friendly report, arrays), without saving any files.
 
-    Choose test_size in advance. Fit on 20 pairs; freeze the whole rule x ->
-    interval. Draw independent test pairs from the same input/output process.
+    Choose query and test_size in advance. Fit a deliberately wrong linear
+    model to 20 pairs from a quadratic process. Freeze its interval at query.
+    Validate using independent responses generated ONLY at that same input.
     """
     seed = _count(seed, "seed", minimum=0)
     test_size = _count(test_size, "test_size")
+    if (isinstance(query, bool) or not isinstance(query, Real)
+            or not isfinite(query)):
+        raise ValueError("query must be a finite number")
+    query = float(query)
     train_stream, test_stream = np.random.SeedSequence(seed).spawn(2)
     train_rng = np.random.default_rng(train_stream)
     train_x = train_rng.uniform(-1.0, 1.0, size=20)
-    train_y = 1.0 + 2.0 * train_x + train_rng.normal(0.0, 0.5, size=20)
+    train_y = (1.0 + 2.0 * train_x + 2.0 * train_x**2
+               + train_rng.normal(0.0, 0.5, size=20))
     posterior = fit_posterior(train_x, train_y)
     prediction = {key: float(value) for key, value in
-                  posterior_predictive(0.5, posterior).items()}
-    prediction["x"] = 0.5
+                  posterior_predictive(query, posterior).items()}
+    prediction["x"] = query
     test_rng = np.random.default_rng(test_stream)
-    test_x = test_rng.uniform(-1.0, 1.0, size=test_size)
-    test_y = 1.0 + 2.0 * test_x + test_rng.normal(0.0, 0.5, size=test_size)
-    test_prediction = posterior_predictive(test_x, posterior)
-    covered = (test_prediction["lower"] <= test_y) & (test_y <= test_prediction["upper"])
+    test_x = np.full(test_size, query)
+    test_y = (1.0 + 2.0 * query + 2.0 * query**2
+              + test_rng.normal(0.0, 0.5, size=test_size))
+    covered = (prediction["lower"] <= test_y) & (test_y <= prediction["upper"])
     hits = int(covered.sum())
     report = {
-        "schema_version": 4,
-        "model": {"actual_intercept": 1.0, "actual_slope": 2.0, "actual_noise_sd": 0.5,
-                  "input_distribution": "Uniform(-1, 1)", "prior_mean": [0.0, 0.0],
+        "schema_version": 5,
+        "model": {"actual_mean_function": "1 + 2*x + 2*x**2",
+                  "actual_noise_sd": 0.5,
+                  "assumed_mean_function": "intercept + slope*x",
+                  "training_input_distribution": "Uniform(-1, 1)",
+                  "prior_mean": [0.0, 0.0],
                   "prior_covariance": [[4.0, 0.0], [0.0, 4.0]],
                   "alpha": 0.25, "assumed_noise_sd": 0.5, "beta": 4.0},
         "settings": {"seed": seed, "training_size": 20, "test_size": test_size,
-                     "delta": 0.05, "random_streams": "SeedSequence.spawn(2): train, test"},
+                     "query": query, "delta": 0.05,
+                     "random_streams": "SeedSequence.spawn(2): train, test"},
         "posterior": posterior,
         "prediction": prediction,
         "validation": {"size": test_size, "hits": hits, "estimate": hits / test_size,
                        "margin": hoeffding_margin(test_size),
                        "lower_bound": hoeffding_lower(hits, test_size),
                        "confidence": 0.95,
-                       "target": "Average coverage over fresh (X, Y) pairs from the same process"},
+                       "target": "Conditional coverage P(Y in the frozen interval | X = query)",
+                       "query": query,
+                       "confidence_scope": "One prespecified query and one frozen interval",
+                       "sampling": "Independent fresh responses at the same fixed query"},
     }
     return report, {"train_x": train_x, "train_y": train_y, "test_x": test_x,
                     "test_y": test_y, "covered": covered}
