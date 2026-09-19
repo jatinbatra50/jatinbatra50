@@ -1,26 +1,21 @@
-# Contributing
+# Keep the lesson small and runnable
 
-Every proposed statistical claim should identify the target probability, the
-independent sampling unit, what was chosen before validation, and the scope of
-the error budget. Include a derivation or a precise reference. Label numerical
-evidence as such; passing simulation tests is not a proof.
+Use one example throughout. Explain what a number means before adding another
+formula. Keep the notebook self-contained and retain the distinction between
+prediction coverage and confidence in a measured coverage rate.
 
-For a code change:
+`TUTORIAL.md` is the notebook's source. After editing it, run:
 
 ```bash
-python -m pip install -r requirements.txt
+python scripts/build_tutorial_notebook.py
+python scripts/execute_tutorial_notebook.py
+python experiments.py
 python -m unittest discover -s tests -v
-python experiments.py --trials 20 --mc-samples 30 --output-dir /tmp/uq-smoke
 ```
 
-For a new experiment, state the seed, parameters, trial count, Monte Carlo
-count, candidate family, target, and failure budget before seeing outcomes.
-Do not tune on the final audit and retain its original guarantee. Save the
-machine-readable report with any figures; keep quick checks separate from
-reported scientific results.
+Commit the executed notebook and regenerated results together. Keep the
+training, calibration, and measurement samples separate. Choose measurement
+precision and sample size before drawing the measurement sample.
 
-Use GitHub-supported `$...$` and `$$...$$` math in Markdown. Keep variable
-names consistent across proofs, code, and figures. New bounds should have
-non-random tests against known cases and, where practical, exact finite
-binomial enumeration of their failure probabilities. Add integration tests
-for behavior that crosses the simulation/certificate boundary.
+`requirements-reproduce.txt` records the versions used for the saved example.
+CI also runs the tutorial and tests on Python 3.10 and 3.12.

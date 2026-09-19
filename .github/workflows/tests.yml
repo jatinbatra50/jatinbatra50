@@ -1,4 +1,4 @@
-name: Tests and reproducible smoke run
+name: Tutorial and tests
 on:
   push:
   pull_request:
@@ -17,5 +17,5 @@ jobs:
           python-version: ${{ matrix.python-version }}
       - run: python -m pip install -r requirements.txt
       - run: python -m unittest discover -s tests -v
-      - run: python experiments.py --trials 20 --mc-samples 30 --output-dir /tmp/uq-smoke
+      - run: python experiments.py --output-dir /tmp/uq-example
       - run: python scripts/execute_tutorial_notebook.py

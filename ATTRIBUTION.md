@@ -1,27 +1,21 @@
-# Provenance and scope
+# Attribution and references
 
-This tutorial develops the simulation study in
-[payal101/UQ_1](https://github.com/payal101/UQ_1), starting from commit
-`eaa3830` ("Revise README for clarity and structure"). The source notebook's
-linear-regression generator, OLS fit, Monte Carlo construction, and original
-coverage experiment are retained in `uq1.ipynb`. The notebook now also contains
-the finite-sample validation layer and its executed output.
+[Payal's UQ_1](https://github.com/payal101/UQ_1) was the starting inspiration
+for this project. This edition is a standalone UQ lesson with a new synthetic
+sensor example. It makes no assessment of that repository's results.
 
-The additions are the reusable certificate implementation, mathematical
-tutorial chapters, fast vectorized simulator, experiment runner, documented
-results, and automated tests. The vectorized runner reproduces each nominal
-level's statistical experiment but uses a different random-number protocol
-and shares randomness across levels; its counts need not match the notebook.
+The methods are established statistical tools:
 
-Hoeffding inequalities, Bernoulli Chernoff bounds, KL inversion, union bounds,
-and the elementary repeated-inspection construction are established
-mathematical tools. This repository is a teaching and reproducibility project;
-it does not present those tools as new research theorems. The extensions
-chapter distinguishes proved consequences from possible further projects.
+- **Split conformal prediction:** Angelopoulos and Bates,
+  [A Gentle Introduction to Conformal Prediction and Distribution-Free Uncertainty Quantification](https://arxiv.org/abs/2107.07511),
+  especially Section 1.1. The tutorial uses absolute residuals and an exact
+  order statistic for calibration.
+- **Finite-sample measurement error:** Hoeffding (1963),
+  [Probability Inequalities for Sums of Bounded Random Variables](https://www.cs.rpi.edu/academics/courses/spring06/random/hoefding.pdf).
+  The tutorial applies the two-sided inequality to independent coverage
+  indicators, which take values in {0, 1}.
 
-No license file was present in the source snapshot. This tutorial does not
-assign a new license to the source material. Preserve source attribution and
-obtain the relevant authors' permission for uses that require a license.
-
-The numerical examples contain synthetic data only. No real experimental
-measurements or private user data are included.
+The code, examples, and explanations in this edition are written for teaching.
+The generated observations contain no private or real experimental data.
+The original repository supplied no license in the source snapshot; this
+project does not grant rights to material from that repository.
