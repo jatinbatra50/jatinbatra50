@@ -1,9 +1,9 @@
-# Keep the guarantee point-specific
+# Keep the coverage claim precise
 
-The model generates a candidate interval. The only asserted real coverage
-guarantee comes from fresh measurements at the chosen input and a
-concentration bound. Keep the nonlinear true sensor separate from the
-assumed Gaussian linear model.
+The model proposes an interval rule. Independent held-out input–response
+pairs and a concentration bound supply its marginal coverage guarantee.
+Keep the nonlinear true process separate from the assumed Gaussian linear
+model.
 
 `TUTORIAL.md` is the notebook source. Regenerate and check with:
 
@@ -14,12 +14,16 @@ python experiments.py
 python -m unittest discover -s tests -v
 ```
 
-Freeze the query, proposed interval, and measurement count before validation.
-Every validation response must be drawn at that query. Do not substitute
-random-input coverage for conditional coverage at a point, or posterior
-samples for measurements from the actual process.
+Freeze the fitted rule, nominal level, and sample size before validation.
+Each response is checked against the interval at its own input. Validation
+pairs are independent of training and each other, and come from the future
+population. Do not substitute posterior draws for actual observations.
 
-State that confidence applies to one chosen query and interval. Round
-reported lower guarantees downward. Plot only the conditional validation
-experiment and candidate endpoints; no mean or prediction bands across inputs.
-Keep the notebook independent of project imports.
+State that the bound averages over random inputs with the trained rule held
+fixed. Do not claim coverage at each input. The confidence level concerns one
+frozen rule and validation experiment. If the rule is revised using validation
+results, check it on fresh data.
+
+Round reported lower guarantees downward. Plot validation counts without
+mean or predictive bands across inputs. Keep the notebook independent of
+project imports and keep the prose short; no bound proofs are needed.

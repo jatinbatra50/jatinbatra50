@@ -1,25 +1,22 @@
-# Validate an interval at one chosen input
+# Predict a range. Measure how often it works.
 
-Fix **$x_*=0.5$**. We want a range for the next response at this input.
+A model proposes a response interval for each input. We want to know how
+often these intervals cover new outcomes **across the population of inputs**.
+This is called **marginal coverage**.
 
-A Bayesian model will propose the range. **Only fresh measurements and a
-concentration bound will support its actual coverage.** The experiment below
-deliberately uses a wrong linear model.
+We can measure it using an ordinary held-out dataset: each new input comes
+with one response. No repeated measurements at an exact input are needed.
 
-## 1. Separate the sensor from the model
+## 1. Start with data; allow the model to be wrong
 
-The actual sensor is nonlinear:
+Our example population has random inputs and a curved response:
 
-$$Y=1+2x+2x^2+\varepsilon,\qquad\varepsilon\sim\mathcal N(0,0.5^2).$$
+$$X\sim\mathrm{Uniform}[-1,1],\qquad
+Y=1+2X+2X^2+\varepsilon,\quad \varepsilon\sim\mathcal N(0,0.5^2).$$
 
-Our working model still assumes a straight line, Gaussian coefficient prior
-$\mathbf w\sim\mathcal N(0,4I)$, and Gaussian noise of standard deviation 0.5.
-There is no coefficient pair that makes this line model equal to the true
-mean curve. We use its calculations to propose an interval, without assuming
-its model or prior describes reality.
-
-All observations here are simulated. In an application, the validation
-measurements must come from the actual system.
+We will fit a straight line. It cannot represent this true mean.
+All data below are simulated; in an application, use observations from
+the actual population you want to predict.
 
 ```python
 import math
@@ -27,8 +24,7 @@ from statistics import NormalDist
 import numpy as np
 import matplotlib.pyplot as plt
 
-QUERY = 0.5              # fix the input before validation
-TEST_COUNT = 10_000       # fix the measurement count too
+TEST_COUNT = 10_000       # choose the sample size before validation
 FAILURE_CHANCE = 0.05
 
 train_rng, validation_rng = [
@@ -43,16 +39,20 @@ x_train = train_rng.uniform(-1, 1, 20)
 y_train = actual_mean(x_train) + train_rng.normal(0, 0.5, 20)
 ```
 
-## 2. Propose an interval at this input
+## 2. Use Bayesian regression to propose intervals
 
-Use the same Gaussian Bayesian regression calculation as in Bishop.
-Each row of $\Phi$ is $[1,x_i]$. The following code computes the working
-model's posterior mean and covariance, then its predictive interval at
-$0.5$.
+Our working model is $Y=w_0+w_1x+\text{noise}$, with Gaussian prior
+$\mathbf w\sim\mathcal N(0,4I)$ and Gaussian noise variance $0.25$.
 
-Its nominal 99% level is a setting in this calculation, **not a real-world
-coverage guarantee**.
-[Proposal calculation reference](https://www.microsoft.com/en-us/research/wp-content/uploads/2016/05/prml-slides-3.pdf).
+Bishop's regression calculation gives posterior mean $m$ and covariance $S$.
+At input $x$, write $\phi=[1,x]^T$. The model's predictive distribution is
+
+$$Y\mid x,D\ \sim\ \mathcal N\!\left(\phi^Tm,\ 0.25+\phi^TS\phi\right).$$
+
+The $0.25$ accounts for noise in a **new response**.
+Use the middle 99% of this Gaussian as the proposed interval $I_D(x)$.
+That nominal 99% is a model setting; its actual coverage still needs testing.
+[Calculation reference](https://www.microsoft.com/en-us/research/wp-content/uploads/2016/05/prml-slides-3.pdf).
 
 ```python
 alpha, beta = 0.25, 4.0
@@ -60,108 +60,101 @@ Phi = np.column_stack([np.ones(len(x_train)), x_train])
 precision = alpha*np.eye(2) + beta*Phi.T@Phi
 S = np.linalg.solve(precision, np.eye(2))
 m = np.linalg.solve(precision, beta*Phi.T@y_train)
-
-phi = np.array([1.0, QUERY])
-center = float(phi@m)
-proposal_sd = math.sqrt(1/beta + phi@S@phi)
 z = NormalDist().inv_cdf(0.995)
-low, high = center-z*proposal_sd, center+z*proposal_sd
-print(f"At x = {QUERY}, the proposed interval is [{low:.3f}, {high:.3f}]")
+
+def proposed_intervals(x):
+    phi = np.column_stack([np.ones(len(x)), x])
+    center = phi@m
+    variance = 1/beta + np.einsum("ij,jk,ik->i", phi, S, phi)
+    radius = z*np.sqrt(variance)
+    return center-radius, center+radius
+
+print("Fitted coefficients:", np.round(m, 3))
 ```
 
-The candidate is **[1.516, 4.196]**. Freeze it now.
+**Freeze this fitted rule now.** It produces different endpoints at different
+inputs, but its coefficients and nominal level stay fixed throughout validation.
 
-## 3. Repeat the measurement at exactly the same input
+## 3. Check each fresh response against its own interval
 
-Obtain 10,000 independent responses at **$x=0.5$**, and count how many land
-inside the candidate. These are new responses from the sensor, not samples
-from the fitted Bayesian model.
+Draw 10,000 independent input–response pairs from the same population.
+These responses come from the actual process, not the fitted model.
 
 ```python
-validation_y = actual_mean(QUERY) + validation_rng.normal(0, 0.5, TEST_COUNT)
+validation_x = validation_rng.uniform(-1, 1, TEST_COUNT)
+validation_y = actual_mean(validation_x) + validation_rng.normal(0, 0.5, TEST_COUNT)
+
+low, high = proposed_intervals(validation_x)
 inside = (validation_y >= low) & (validation_y <= high)
 hits = int(inside.sum())
 observed_coverage = hits / TEST_COUNT
-print(f"At x = {QUERY}: {hits:,} of {TEST_COUNT:,} responses inside")
-print(f"Measured conditional coverage: {100*observed_coverage:.2f}%")
+print(f"{hits:,} of {TEST_COUNT:,} responses inside their own intervals")
+print(f"Measured marginal coverage: {100*observed_coverage:.2f}%")
 ```
 
-**9,745 of 10,000** are inside: **97.45% measured coverage at this input**.
+**9,170 of 10,000** are inside: **91.70% measured coverage**.
+The model's nominal 99% did not describe this population.
 
-## 4. Put a rigorous lower bound on that coverage
+## 4. Turn the measurement into a coverage guarantee
 
-Let $p_*$ be the actual probability that a new response at $x=0.5$ falls
-inside the frozen interval. Every validation response supplies an independent
-0-or-1 observation with mean $p_*$.
+Hold the fitted model $D$ fixed. Our target is
 
-The one-sided Hoeffding bound gives a 95% lower confidence bound:
+$$p_D=\Pr_{(X,Y)\text{ from the population}}\{Y\in I_D(X)\}.$$
 
-$$
-p_*\ \geq\ \widehat p_*-
-\sqrt{\frac{\log(1/0.05)}{2N}}.
-$$
+Each held-out pair contributes an independent 0-or-1 observation with mean
+$p_D$. The one-sided Hoeffding bound gives a 95% lower confidence bound:
 
-The allowance is **1.224 percentage points**, leaving **96.226%**.
-Rounding downward, report:
-
-> At input x = 0.5, with 95% confidence, the fixed interval [1.516, 4.196]
-> covers at least **96.2% of future responses at this input**.
-
-Endpoint values in this sentence are displayed rounded; the calculation
-uses their full precision.
+$$L=\max\!\left(0,\ \widehat p-
+\sqrt{\frac{\log(1/0.05)}{2N}}\right).$$
 
 ```python
 allowance = math.sqrt(math.log(1/FAILURE_CHANCE) / (2*TEST_COUNT))
 lower_bound = max(0, observed_coverage-allowance)
 reported_percent = math.floor(1000*lower_bound) / 10
 print(f"Hoeffding allowance: {100*allowance:.3f} percentage points")
-print(f"At x = {QUERY}, coverage is at least {reported_percent:.1f}% "
-      "with 95% confidence.")
+print(f"Lower coverage bound: {100*lower_bound:.3f}%")
+print(f"With 95% confidence, marginal coverage is at least {reported_percent:.1f}%.")
 ```
 
-The 95% confidence concerns the validation experiment: the chance this
-procedure overstates $p_*$ is at most 5%. The 96.2% concerns future responses
-at the chosen input. **Neither the linear model nor the Gaussian prior needs
-to be correct for this statement.**
+Subtract **1.224 percentage points** from 91.70%, giving **90.476%**.
+Round downward when reporting the guarantee:
+
+> With 95% confidence, this frozen interval rule covers at least **90.4%**
+> of future input–response pairs drawn from the same population.
+
+The **95%** concerns the validation procedure: its chance of overstating
+$p_D$ is at most 5%. The **90.4%** concerns coverage of future pairs.
+Neither the straight-line model nor the Gaussian prior needs to be correct
+for this statement.
 [Hoeffding reference](https://www.cs.rpi.edu/academics/courses/spring06/random/hoefding.pdf).
 
-## 5. Plot only what was tested
-
-The histogram shows repeated responses at $x=0.5$. The two dashed lines
-mark the proposed endpoints. There is no band across untested input values.
+## 5. Show what validation measured
 
 ```python
 fig, ax = plt.subplots(figsize=(8, 4))
-ax.hist(validation_y, bins=45, color="#cbd5e1", edgecolor="white")
-ax.axvline(low, color="#b85a24", ls="--", lw=2, label="Proposed endpoints")
-ax.axvline(high, color="#b85a24", ls="--", lw=2)
-ax.set(xlabel=f"Response Y in repeated measurements at x = {QUERY}",
-       ylabel="Number of measurements", title="Validate one fixed input")
-ax.text(0.97, 0.94,
-        f"{hits:,} / {TEST_COUNT:,} inside\n"
-        f"Measured: {100*observed_coverage:.2f}%\n"
+counts = [hits, TEST_COUNT-hits]
+bars = ax.bar(["Inside own proposed interval", "Outside"],
+              counts, color=["#367c91", "#ba6448"], width=0.55)
+ax.bar_label(bars, labels=[f"{n:,}" for n in counts], padding=5)
+ax.set_ylim(0, TEST_COUNT*1.10)
+ax.set_ylabel("Number of held-out pairs")
+ax.set_title("Marginal coverage on fresh input–response pairs", pad=30)
+ax.text(0.5, 1.02,
+        f"Measured: {100*observed_coverage:.2f}%   |   "
         f"95% lower bound: {reported_percent:.1f}%",
-        transform=ax.transAxes, ha="right", va="top", fontsize=10,
-        bbox={"facecolor": "white", "edgecolor": "none", "alpha": 0.9})
+        transform=ax.transAxes, ha="center")
 ax.spines[["top", "right"]].set_visible(False)
-ax.legend(frameon=True, facecolor="white", edgecolor="none", framealpha=1,
-          loc="upper left")
 fig.tight_layout()
 plt.show()
 ```
 
-![Conditional validation responses and candidate endpoints](results/demo/point-validation.png)
+![Counts of fresh outcomes inside and outside their own proposed intervals](results/demo/marginal-validation.png)
 
-**Scope:** this statement certifies one chosen input and interval. At another
-input, run a corresponding conditional experiment. Separate 95% statements
-are not a simultaneous 95% guarantee across inputs.
+**Scope:** the guarantee averages over inputs. Some inputs may have worse
+coverage; it does not certify coverage at a particular input.
 
-**Required access:** you need independent measurements at the chosen input,
-or valid access to its true conditional distribution. A generic test set
-with randomly located continuous inputs does not provide this guarantee at
-an exact new input without additional structure. A simulator certifies only
-the process it faithfully represents.
-
-More measurements reduce the statistical allowance. They do not repair a
-poor proposed interval. If you revise the interval after checking it, validate
-the revision on fresh responses.
+Validation pairs must be independent of training and of each other, and
+represent the future population. Choose the sample size in advance.
+If you change the rule after seeing validation results, check the revised
+rule on fresh data. More measurements shrink the Hoeffding allowance;
+they do not improve the rule's actual coverage.

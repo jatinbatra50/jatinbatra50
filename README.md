@@ -1,47 +1,39 @@
-# Test a proposed interval at one input
+# Predict a range. Validate its coverage.
 
-**The model proposes an interval. Repeated measurements at the chosen input
-supply the coverage guarantee.**
+**Bayesian regression proposes intervals. Independent held-out data and
+Hoeffding's bound tell us how often those intervals actually work.**
 
 [Read the lesson](TUTORIAL.md) · [Run the notebook](Provable_UQ_Tutorial.ipynb)
 
-## One input, one coverage statement
+## One ordinary test set
 
-Fix **x = 0.5** before validation. A Gaussian Bayesian linear regression model
-proposes **[1.516, 4.196]** for the next response at that input.
+Fit a Gaussian Bayesian linear regression model to 20 observations.
+Its posterior predictive distribution proposes a nominal 99% interval
+at each new input.
 
-The actual sensor in this example is **nonlinear**. The linear model and its
-Gaussian coefficient prior are only working assumptions; we do not trust
-the model's nominal 99% probability.
+The actual mean response is **quadratic**, so our straight-line model is
+wrong. Its prior and predictive probabilities are working assumptions.
 
-Take **10,000 fresh, independent responses at exactly x = 0.5**:
+Freeze the fitted rule, then collect **10,000 independent input–response
+pairs**. For each pair, check whether the response is inside the interval
+proposed at its own input:
 
-- **9,745** land inside the proposed interval: **97.45% measured coverage**.
-- A one-sided Hoeffding calculation subtracts **1.224 percentage points**.
-- Rounded down, the supported statement is:
+- **9,170** are inside: **91.70% measured marginal coverage**.
+- One-sided Hoeffding subtracts **1.224 percentage points**.
+- Rounding the lower bound downward gives:
 
-> At x = 0.5, with 95% confidence, this fixed interval covers at least
-> **96.2% of future responses** from the same sensor at that input.
+> With 95% confidence, this frozen interval rule covers at least **90.4%**
+> of future input–response pairs from the same population.
 
-![Repeated measurements at the chosen input, with candidate interval endpoints](results/demo/point-validation.png)
+![Held-out outcomes inside and outside their own intervals](results/demo/marginal-validation.png)
 
-There are no uncertainty bands across inputs. The endpoint lines mark the
-candidate interval; the coverage statement comes entirely from validation.
+**Marginal coverage** averages over the population of inputs. It does not
+guarantee coverage at each particular input. There is no need to collect
+repeated responses at exactly the same input.
 
-## What is required
-
-The chosen input, interval, and measurement count are fixed before checking
-outcomes. Validation uses independent responses from the actual conditional
-distribution at that input. The model and prior may be wrong.
-
-This is a 95% confidence statement for **this input and interval**. It is not a
-simultaneous guarantee over other inputs. To check another input, perform
-a corresponding conditional validation experiment.
-
-Randomly located test points generally cannot certify an exact new input
-without additional assumptions. You need repeated measurements at that input
-or access to its true conditional distribution. A simulator supplies such
-a claim only for the process it faithfully represents.
+The guarantee needs independent validation data from the future population,
+a frozen prediction rule, and a sample size chosen in advance.
+It does not need a correct linear model or Gaussian prior.
 
 ## Run
 
@@ -54,22 +46,14 @@ python -m pip install -r requirements-notebook.txt
 jupyter lab Provable_UQ_Tutorial.ipynb
 ```
 
-The notebook is self-contained. Regenerate its numerical example with:
+The notebook is self-contained and includes executed outputs.
+Regenerate the example with:
 
 ```bash
 python experiments.py
 ```
 
-To run a separate check at a different, prechosen input:
-
-```bash
-python experiments.py --query 0.8 --output-dir results/query-08
-```
-
-Each run has its own pointwise confidence statement; several such statements
-do not automatically give a joint 95% guarantee.
-
-All observations here are synthetic. The reusable calculations are in
-[uq.py](uq.py); [report.json](results/demo/report.json) records the input,
-interval, counts, and confidence scope.
-[References and attribution](ATTRIBUTION.md).
+All observations here are synthetic. Replace them with real held-out pairs
+to validate a real application. The calculations are in [uq.py](uq.py);
+[report.json](results/demo/report.json) records the experiment and coverage
+bound. [References and attribution](ATTRIBUTION.md).

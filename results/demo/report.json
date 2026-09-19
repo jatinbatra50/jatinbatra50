@@ -1,10 +1,11 @@
 {
-  "schema_version": 5,
+  "schema_version": 6,
   "model": {
     "actual_mean_function": "1 + 2*x + 2*x**2",
     "actual_noise_sd": 0.5,
     "assumed_mean_function": "intercept + slope*x",
     "training_input_distribution": "Uniform(-1, 1)",
+    "validation_and_future_input_distribution": "Uniform(-1, 1)",
     "prior_mean": [
       0.0,
       0.0
@@ -27,7 +28,6 @@
     "seed": 20260919,
     "training_size": 20,
     "test_size": 10000,
-    "query": 0.5,
     "delta": 0.05,
     "random_streams": "SeedSequence.spawn(2): train, test"
   },
@@ -50,23 +50,19 @@
     "noise_sd": 0.5
   },
   "prediction": {
-    "mean": 2.8560153687806653,
-    "predictive_sd": 0.5200751926560498,
-    "lower": 1.5163904474883725,
-    "upper": 4.195640290072959,
     "nominal_level": 0.99,
-    "x": 0.5
+    "rule": "Frozen Bayesian linear posterior predictive interval at each input"
   },
   "validation": {
     "size": 10000,
-    "hits": 9745,
-    "estimate": 0.9745,
+    "hits": 9170,
+    "estimate": 0.917,
     "margin": 0.012238734153404082,
-    "lower_bound": 0.962261265846596,
+    "lower_bound": 0.904761265846596,
     "confidence": 0.95,
-    "target": "Conditional coverage P(Y in the frozen interval | X = query)",
-    "query": 0.5,
-    "confidence_scope": "One prespecified query and one frozen interval",
-    "sampling": "Independent fresh responses at the same fixed query"
+    "target": "Marginal coverage P(Y in I(X) | training data) for a fresh (X, Y) pair",
+    "confidence_scope": "One frozen prediction rule, conditional on its training data",
+    "sampling": "Independent fresh (X, Y) pairs from the same joint law as future pairs",
+    "per_input_guarantee": false
   }
 }
